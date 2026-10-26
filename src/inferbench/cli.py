@@ -148,19 +148,46 @@ def doctor(
         typer.echo("  Real vLLM/GPU measurements require a GPU host.")
 
 
-def _not_implemented(command: str, phase: str) -> None:
-    typer.echo(
-        f"'{command}' is planned for {phase} and is not implemented yet.\n"
-        f"See docs/roadmap.md for the phase plan.",
-        err=True,
-    )
-    raise typer.Exit(code=2)
-
-
 @app.command()
-def models() -> None:
+def models(
+    profiles: Annotated[
+        str | None,
+        typer.Option("--profiles", help="Optional YAML file defining or overriding profiles."),
+    ] = None,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit profiles as JSON."),
+    ] = False,
+) -> None:
     """List configured or supported model profiles."""
-    _not_implemented("models", "Phase 2")
+    from inferbench.models import list_profiles
+
+    entries = list_profiles(profiles)
+
+    if as_json:
+        typer.echo(json.dumps([p.to_dict() for p in entries], indent=2))
+        return
+
+    typer.echo("Model profiles")
+    typer.echo("=" * 72)
+    for profile in entries:
+        gpu = "GPU" if profile.requires_gpu else "CPU-ok"
+        typer.echo(f"  {profile.name:<22} [{gpu}] {profile.model}")
+        if profile.description:
+            typer.echo(f"  {'':<22} {profile.description}")
+        details = []
+        if profile.parameters_billions is not None:
+            details.append(f"{profile.parameters_billions:g}B")
+        if profile.dtype:
+            details.append(profile.dtype)
+        if profile.quantization:
+            details.append(profile.quantization)
+        if details:
+            typer.echo(f"  {'':<22} ({', '.join(details)})")
+        typer.echo("")
+
+    typer.echo("Profiles describe what to run; whether a model is actually served is")
+    typer.echo("validated by the backend at run time.")
 
 
 @app.command()
@@ -269,11 +296,101 @@ def _print_run_summary(result: Any) -> None:
 
 @app.command()
 def compare(
-    run_a: Annotated[str, typer.Argument(help="First run id.")],
+    run_a: Annotated[str, typer.Argument(help="First (baseline) run id.")],
     run_b: Annotated[str, typer.Argument(help="Second run id.")],
+    output_dir: Annotated[
+        str,
+        typer.Option("--output-dir", "-o", help="Directory holding the experiment store."),
+    ] = "runs",
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit the comparison as JSON."),
+    ] = False,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Compare even when the fairness gate blocks it (results may be misleading).",
+        ),
+    ] = False,
 ) -> None:
     """Compare two compatible runs."""
-    _not_implemented("compare", "Phase 2")
+    from inferbench.analysis import compare_runs, format_comparison
+    from inferbench.storage import ExperimentStore
+
+    store = ExperimentStore(output_dir)
+    try:
+        try:
+            result = compare_runs(store, run_a, run_b)
+        except InferBenchError as exc:
+            if not force:
+                raise
+            # Report the refusal, then proceed explicitly at the user's request.
+            typer.echo(f"Fairness gate blocked this comparison: {exc}", err=True)
+            typer.echo("Proceeding due to --force. Interpret with caution.", err=True)
+            result = _forced_comparison(store, run_a, run_b)
+    finally:
+        store.close()
+
+    if as_json:
+        typer.echo(json.dumps(result.to_dict(), indent=2, default=str))
+    else:
+        typer.echo(format_comparison(result))
+
+
+def _forced_comparison(store: Any, run_a: str, run_b: str) -> Any:
+    """Build a comparison while recording that the fairness gate was overridden."""
+    from inferbench.analysis import ComparisonResult, check_compatibility
+    from inferbench.analysis.compare import MetricDelta
+
+    compatibility = check_compatibility(store.get_metadata(run_a), store.get_metadata(run_b))
+    summary_a = store.get_summary(run_a)
+    summary_b = store.get_summary(run_b)
+
+    def delta(name: str, unit: str, a: Any, b: Any, lower: bool = True) -> Any:
+        absolute = None
+        percent = None
+        if a is not None and b is not None:
+            absolute = b - a
+            if a != 0:
+                percent = (b - a) / a * 100.0
+        return MetricDelta(name, unit, a, b, absolute, percent, lower)
+
+    lat_a, lat_b = summary_a.get("latency", {}), summary_b.get("latency", {})
+    tp_a, tp_b = summary_a.get("throughput", {}), summary_b.get("throughput", {})
+    fl_a, fl_b = summary_a.get("failures", {}), summary_b.get("failures", {})
+
+    deltas = (
+        delta("TTFT p50", "s", lat_a.get("ttft", {}).get("p50"), lat_b.get("ttft", {}).get("p50")),
+        delta("TTFT p95", "s", lat_a.get("ttft", {}).get("p95"), lat_b.get("ttft", {}).get("p95")),
+        delta("TPOT p50", "s", lat_a.get("tpot", {}).get("p50"), lat_b.get("tpot", {}).get("p50")),
+        delta("E2E p50", "s", lat_a.get("e2e", {}).get("p50"), lat_b.get("e2e", {}).get("p50")),
+        delta("E2E p95", "s", lat_a.get("e2e", {}).get("p95"), lat_b.get("e2e", {}).get("p95")),
+        delta("E2E p99", "s", lat_a.get("e2e", {}).get("p99"), lat_b.get("e2e", {}).get("p99")),
+        delta(
+            "requests/sec", "req/s", tp_a.get("requests_per_s"), tp_b.get("requests_per_s"), False
+        ),
+        delta(
+            "output tokens/sec",
+            "tok/s",
+            tp_a.get("output_tokens_per_s"),
+            tp_b.get("output_tokens_per_s"),
+            False,
+        ),
+        delta("failure rate", "", fl_a.get("failure_rate"), fl_b.get("failure_rate")),
+    )
+
+    return ComparisonResult(
+        run_a=run_a,
+        run_b=run_b,
+        compatibility=compatibility,
+        deltas=deltas,
+        notes=[
+            "fairness gate was overridden with --force; the runs are not "
+            "methodologically comparable and the deltas may be misleading",
+            *compatibility.blockers,
+        ],
+    )
 
 
 @app.command()
@@ -309,9 +426,33 @@ def report(
 @app.command()
 def validate(
     run_id: Annotated[str, typer.Argument(help="Run id to validate.")],
+    output_dir: Annotated[
+        str,
+        typer.Option("--output-dir", "-o", help="Directory holding the experiment store."),
+    ] = "runs",
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Emit findings as JSON."),
+    ] = False,
 ) -> None:
     """Check result completeness and metadata integrity for a run."""
-    _not_implemented("validate", "Phase 2")
+    from inferbench.analysis import format_report, validate_run
+    from inferbench.storage import ExperimentStore
+
+    store = ExperimentStore(output_dir)
+    try:
+        report = validate_run(store, run_id)
+    finally:
+        store.close()
+
+    if as_json:
+        typer.echo(json.dumps(report.to_dict(), indent=2, default=str))
+    else:
+        typer.echo(format_report(report))
+
+    # A non-zero exit makes validation usable in scripts and CI.
+    if not report.is_valid:
+        raise typer.Exit(code=1)
 
 
 def main() -> None:

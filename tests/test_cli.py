@@ -63,23 +63,6 @@ class TestDoctor:
         assert result.exit_code == 0
 
 
-class TestUnimplementedCommands:
-    def test_compare_states_phase(self) -> None:
-        result = runner.invoke(app, ["compare", "a", "b"])
-        assert result.exit_code == 2
-        assert "Phase" in _combined(result)
-
-    def test_validate_states_phase(self) -> None:
-        result = runner.invoke(app, ["validate", "run-1"])
-        assert result.exit_code == 2
-        assert "Phase" in _combined(result)
-
-    def test_models_states_phase(self) -> None:
-        result = runner.invoke(app, ["models"])
-        assert result.exit_code == 2
-        assert "Phase" in _combined(result)
-
-
 class TestRunCommand:
     def test_run_end_to_end_smoke(self, tmp_path: Path) -> None:
         """`inferbench run` must produce a stored run and a report."""
@@ -166,3 +149,144 @@ class TestReportCommand:
             app, ["report", "ghost-run", "--output-dir", str(tmp_path), "--no-charts"]
         )
         assert result.exit_code != 0
+
+
+class TestModelsCommand:
+    def test_lists_profiles(self) -> None:
+        result = runner.invoke(app, ["models"])
+        assert result.exit_code == 0
+        assert "Model profiles" in result.stdout
+        assert "mock" in result.stdout
+
+    def test_json_output_is_valid(self) -> None:
+        result = runner.invoke(app, ["models", "--json"])
+        assert result.exit_code == 0
+        profiles = json.loads(result.stdout)
+        assert any(p["name"] == "mock" for p in profiles)
+
+    def test_custom_profile_file(self, tmp_path: Path) -> None:
+        profile_file = tmp_path / "profiles.yaml"
+        profile_file.write_text(
+            "custom:\n  backend_kind: vllm\n  model: org/custom\n", encoding="utf-8"
+        )
+        result = runner.invoke(app, ["models", "--profiles", str(profile_file)])
+        assert result.exit_code == 0
+        assert "custom" in result.stdout
+
+
+def _write_config(tmp_path: Path, name: str, concurrency: int = 1, prompt_tokens: int = 64) -> Path:
+    path = tmp_path / f"{name}.yaml"
+    path.write_text(
+        f"run_name: {name}\n"
+        "backend:\n  kind: mock\n  model: mock-model\n"
+        f"workload:\n  kind: fixed\n  num_requests: 4\n  prompt_tokens: {prompt_tokens}\n"
+        "  output_tokens: 4\n  seed: 0\n"
+        f"load:\n  concurrency: {concurrency}\n  warmup_requests: 0\n  repetitions: 2\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _produce_runs(tmp_path: Path) -> tuple[Path, str, str]:
+    """Run two compatible experiments and return (out_dir, run_a, run_b)."""
+    out_dir = tmp_path / "runs"
+    for name, concurrency in (("run-a", 1), ("run-b", 4)):
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--config",
+                str(_write_config(tmp_path, name, concurrency)),
+                "--output-dir",
+                str(out_dir),
+                "--no-report",
+                "--no-charts",
+            ],
+        )
+        assert result.exit_code == 0, _combined(result)
+    a = next(p.name for p in out_dir.iterdir() if p.is_dir() and "run-a" in p.name)
+    b = next(p.name for p in out_dir.iterdir() if p.is_dir() and "run-b" in p.name)
+    return out_dir, a, b
+
+
+class TestValidateCommand:
+    def test_valid_run_exits_zero(self, tmp_path: Path) -> None:
+        out_dir, a, _ = _produce_runs(tmp_path)
+        result = runner.invoke(app, ["validate", a, "--output-dir", str(out_dir)])
+        assert result.exit_code == 0, _combined(result)
+        assert "VALID" in result.stdout
+
+    def test_json_output(self, tmp_path: Path) -> None:
+        out_dir, a, _ = _produce_runs(tmp_path)
+        result = runner.invoke(app, ["validate", a, "--output-dir", str(out_dir), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["valid"] is True
+
+    def test_corrupt_run_exits_nonzero(self, tmp_path: Path) -> None:
+        out_dir, a, _ = _produce_runs(tmp_path)
+        # Delete the raw evidence: the run can no longer be audited.
+        (out_dir / a / "raw.jsonl").unlink()
+        result = runner.invoke(app, ["validate", a, "--output-dir", str(out_dir)])
+        assert result.exit_code == 1
+        assert "INVALID" in result.stdout
+
+    def test_unknown_run_errors(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["validate", "ghost", "--output-dir", str(tmp_path)])
+        assert result.exit_code != 0
+
+
+class TestCompareCommand:
+    def test_compatible_runs_compare(self, tmp_path: Path) -> None:
+        out_dir, a, b = _produce_runs(tmp_path)
+        result = runner.invoke(app, ["compare", a, b, "--output-dir", str(out_dir)])
+        assert result.exit_code == 0, _combined(result)
+        assert "requests/sec" in result.stdout
+        assert "concurrency" in result.stdout  # the axis under comparison
+
+    def test_json_output(self, tmp_path: Path) -> None:
+        out_dir, a, b = _produce_runs(tmp_path)
+        result = runner.invoke(app, ["compare", a, b, "--output-dir", str(out_dir), "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["run_a"] == a
+
+    def test_incompatible_runs_refused(self, tmp_path: Path) -> None:
+        out_dir, a, _ = _produce_runs(tmp_path)
+        other = runner.invoke(
+            app,
+            [
+                "run",
+                "--config",
+                str(_write_config(tmp_path, "run-long", prompt_tokens=512)),
+                "--output-dir",
+                str(out_dir),
+                "--no-report",
+                "--no-charts",
+            ],
+        )
+        assert other.exit_code == 0, _combined(other)
+        c = next(p.name for p in out_dir.iterdir() if p.is_dir() and "run-long" in p.name)
+
+        result = runner.invoke(app, ["compare", a, c, "--output-dir", str(out_dir)])
+        assert result.exit_code != 0
+
+    def test_force_overrides_gate(self, tmp_path: Path) -> None:
+        out_dir, a, _ = _produce_runs(tmp_path)
+        runner.invoke(
+            app,
+            [
+                "run",
+                "--config",
+                str(_write_config(tmp_path, "run-long2", prompt_tokens=512)),
+                "--output-dir",
+                str(out_dir),
+                "--no-report",
+                "--no-charts",
+            ],
+        )
+        c = next(p.name for p in out_dir.iterdir() if p.is_dir() and "run-long2" in p.name)
+
+        result = runner.invoke(app, ["compare", a, c, "--output-dir", str(out_dir), "--force"])
+        assert result.exit_code == 0, _combined(result)
+        assert "overridden" in _combined(result).lower()

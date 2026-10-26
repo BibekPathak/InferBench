@@ -7,9 +7,11 @@ inference engines. It is a rigorous benchmarking system — reproducible
 workloads, reliable streaming-based latency metrics, automated experiments, and
 evidence-backed analysis — not a dashboard or an API wrapper.
 
-> **Status: Phase 1 complete.** The benchmark engine runs end to end on CPU with
-> a deterministic mock backend: workload generation → streaming execution →
-> metrics → storage → Markdown report. The vLLM adapter is written against the
+> **Status: Phase 2 complete.** The full benchmark pipeline runs end to end on
+> CPU with a deterministic mock backend, and every CLI command in the
+> specification is implemented: `doctor`, `models`, `run`, `compare`,
+> `report`, `validate`. Comparison is gated on fairness, and validation
+> re-derives metrics from raw evidence. The vLLM adapter is written against the
 > supported OpenAI-compatible API but has **not** been validated against a live
 > server (no GPU on the development host). See [`docs/roadmap.md`](docs/roadmap.md).
 
@@ -36,7 +38,9 @@ evidence-backed analysis — not a dashboard or an API wrapper.
 3. **Graceful degradation.** No GPU is required to install, test, or run the
    mock path.
 4. **Fair comparison.** Runs with different token distributions are never
-   silently compared.
+   silently compared: `compare` refuses, naming the specific incompatibility.
+5. **Auditable results.** `validate` re-derives metrics from `raw.jsonl` and
+   reports any disagreement, so a stored number can always be traced to evidence.
 
 ## Installation
 
@@ -74,6 +78,15 @@ reason the accelerator is unavailable instead of failing.
 ```sh
 # Runs the mock backend end to end, then writes a Markdown report.
 inferbench run --config configs/baseline.yaml
+
+# List known model profiles.
+inferbench models
+
+# Validate that a stored result is complete and auditable (non-zero exit if not).
+inferbench validate <run_id> --output-dir runs
+
+# Compare two runs. Refuses if they are not fairly comparable.
+inferbench compare <run_a> <run_b> --output-dir runs
 
 # Report on a stored run.
 inferbench report <run_id> --output-dir runs
@@ -130,7 +143,8 @@ src/inferbench/
   metrics/          TTFT / TPOT / throughput computation
   runner/           experiment orchestration
   storage/          SQLite index + raw JSONL artifacts
-  analysis/         Markdown reports and optional charts
+  models/           model profile registry
+  analysis/         reports, charts, validation, comparison
 configs/            example experiment configurations
 docs/               methodology, roadmap
 tests/              unit + integration tests (CPU-only)
