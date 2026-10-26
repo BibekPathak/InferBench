@@ -1,0 +1,38 @@
+# InferBench baseline experiment configuration.
+#
+# This config is safe to run on a CPU-only host: it uses the mock backend,
+# which produces deterministic streaming responses without any GPU or model
+# download. Point `backend.kind` at `vllm` (and set `base_url`/`model`) to run
+# the identical workload against a real vLLM server.
+
+run_name: baseline-mock
+experiment: baseline
+notes: >
+  Illustrative baseline used for Phase 1 end-to-end validation of the runner,
+  metrics engine, storage, and reporting path. Measurements produced with the
+  mock backend are SYNTHETIC and must not be presented as GPU performance.
+
+backend:
+  kind: mock
+  model: mock-model
+  request_timeout_s: 60
+  readiness_timeout_s: 30
+  readiness_poll_s: 1
+  # For a real vLLM server, use:
+  #   kind: vllm
+  #   base_url: http://localhost:8000
+  #   model: <served-model-name>
+  # and set INFERBENCH_API_KEY if the server requires auth.
+
+workload:
+  kind: fixed
+  num_requests: 24
+  prompt_tokens: 128
+  output_tokens: 64
+  seed: 0
+
+load:
+  pattern: closed_loop
+  concurrency: 4
+  warmup_requests: 4
+  repetitions: 1
