@@ -8,12 +8,15 @@ and honest about its state, rather than failing with an opaque error.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
 from inferbench import __version__
+from inferbench.config import load_config
 from inferbench.env import collect_environment, environment_to_json
 from inferbench.errors import InferBenchError
 from inferbench.logging_utils import configure_logging, get_logger, log_event
@@ -163,9 +166,105 @@ def models() -> None:
 @app.command()
 def run(
     config: Annotated[str, typer.Option("--config", "-c", help="Path to a run config file.")],
+    output_dir: Annotated[
+        str | None,
+        typer.Option("--output-dir", "-o", help="Override the config's output directory."),
+    ] = None,
+    report: Annotated[
+        bool,
+        typer.Option("--report/--no-report", help="Generate a Markdown report after the run."),
+    ] = True,
+    charts: Annotated[
+        bool,
+        typer.Option("--charts/--no-charts", help="Render charts (requires matplotlib)."),
+    ] = True,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the run summary as JSON."),
+    ] = False,
 ) -> None:
     """Execute an experiment defined by --config."""
-    _not_implemented("run", "Phase 1")
+    from pathlib import Path
+
+    from inferbench.backends import create_backend
+    from inferbench.env import collect_environment
+    from inferbench.runner import Runner
+    from inferbench.storage import ExperimentStore
+
+    run_config = load_config(config)
+    if output_dir:
+        run_config.output_dir = Path(output_dir)
+
+    store = ExperimentStore(run_config.output_dir)
+    try:
+        environment = collect_environment(disk_path=run_config.output_dir).to_dict()
+        backend = create_backend(run_config.backend)
+        runner = Runner(run_config, backend, store, environment=environment)
+        result = asyncio.run(_run_and_teardown(runner, backend))
+    finally:
+        store.close()
+
+    if as_json:
+        typer.echo(json.dumps(result.summary, indent=2, default=str))
+    else:
+        _print_run_summary(result)
+
+    if report:
+        from inferbench.analysis import generate_report
+
+        store = ExperimentStore(run_config.output_dir)
+        try:
+            path = generate_report(store, result.run_id, make_charts=charts)
+        finally:
+            store.close()
+        typer.echo(f"Report: {path}")
+
+
+async def _run_and_teardown(runner: Any, backend: Any) -> Any:
+    """Run the experiment, always tearing the backend down afterwards."""
+    try:
+        return await runner.run()
+    finally:
+        await backend.teardown()
+
+
+def _print_run_summary(result: Any) -> None:
+    summary = result.summary
+    tp = summary.get("throughput", {})
+    lat = summary.get("latency", {})
+    fail = summary.get("failures", {})
+
+    typer.echo("")
+    typer.echo(f"Run complete: {result.run_id}")
+    typer.echo("-" * 60)
+    typer.echo(f"  data source        {summary.get('data_source')}")
+    typer.echo(f"  completed requests {tp.get('successful_requests')}")
+    typer.echo(f"  failed requests    {tp.get('failed_requests')}")
+    typer.echo(f"  wall time          {tp.get('wall_time_s')} s")
+    typer.echo(f"  requests/sec       {tp.get('requests_per_s')}")
+    typer.echo(f"  output tokens/sec  {tp.get('output_tokens_per_s')}")
+
+    ttft = lat.get("ttft", {})
+    e2e = lat.get("e2e", {})
+    tpot = lat.get("tpot", {})
+    typer.echo(
+        f"  TTFT p50/p95       {ttft.get('p50')} / {ttft.get('p95')} s  (n={ttft.get('count')})"
+    )
+    typer.echo(
+        f"  TPOT p50/p95       {tpot.get('p50')} / {tpot.get('p95')} s  (n={tpot.get('count')})"
+    )
+    typer.echo(
+        f"  E2E  p50/p95       {e2e.get('p50')} / {e2e.get('p95')} s  (n={e2e.get('count')})"
+    )
+    typer.echo(f"  failure rate       {fail.get('failure_rate')}")
+
+    if summary.get("data_source") != "measured":
+        typer.echo("")
+        typer.echo("  NOTE: synthetic (mock) backend — not real GPU/model performance.")
+
+    for warning in summary.get("warnings", []):
+        typer.echo(f"  WARNING: {warning}")
+    typer.echo(f"  artifacts          {result.run_dir}")
 
 
 @app.command()
@@ -180,9 +279,31 @@ def compare(
 @app.command()
 def report(
     run_id: Annotated[str, typer.Argument(help="Run id to report on.")],
+    output_dir: Annotated[
+        str,
+        typer.Option("--output-dir", "-o", help="Directory holding the experiment store."),
+    ] = "runs",
+    output: Annotated[
+        str | None,
+        typer.Option(
+            "--output", help="Write the report to this path instead of the run directory."
+        ),
+    ] = None,
+    charts: Annotated[
+        bool,
+        typer.Option("--charts/--no-charts", help="Render charts (requires matplotlib)."),
+    ] = True,
 ) -> None:
     """Generate a Markdown report for a run."""
-    _not_implemented("report", "Phase 1")
+    from inferbench.analysis import generate_report
+    from inferbench.storage import ExperimentStore
+
+    store = ExperimentStore(output_dir)
+    try:
+        path = generate_report(store, run_id, output_path=output, make_charts=charts)
+    finally:
+        store.close()
+    typer.echo(f"Report written: {path}")
 
 
 @app.command()

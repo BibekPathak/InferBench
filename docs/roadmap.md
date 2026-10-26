@@ -7,7 +7,7 @@ GPU host is available; nothing is ever fabricated to fill that gap.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Scaffold, environment doctor, CI | ✅ Complete |
-| 1 | Vertical slice: run → metrics → store → report (mock + vLLM adapter) | ⏳ Planned |
+| 1 | Vertical slice: run → metrics → store → report (mock + vLLM adapter) | ✅ Complete |
 | 2 | Comparison, validation, fairness gating | ⏳ Planned |
 | 3 | Experiments A & B: baseline + workload sensitivity | ⏳ Planned |
 | 4 | Experiment C: concurrency & saturation | ⏳ Planned |
@@ -16,30 +16,49 @@ GPU host is available; nothing is ever fabricated to fill that gap.
 | 7 | Deployment, observability, docs | ⏳ Planned |
 | 8 | Roadmap, illustrative report, release | ⏳ Planned |
 
-## Phase 0 — Scaffold, environment doctor, CI
+## Phase 1 — Vertical slice (complete)
 
-Delivered:
+Delivered the full pipeline end to end, CPU-only:
 
-- Installable `inferbench` package with typed configuration and structured logging.
-- `inferbench doctor` — reports Python, CPU, memory, GPU/CUDA (graceful when
-  absent), disk, and tracked package versions. Supports `--json`.
-- CLI surface registered for every spec command; unimplemented commands state
-  their target phase rather than failing opaquely.
-- Lint (ruff), type checking (mypy strict), and test (pytest) configuration.
-- CI workflow running all three on push and pull request.
+- **Backend adapters** behind a documented `BackendAdapter` interface:
+  - `MockBackend` — deterministic, with an explicit analytic timing model
+    (TTFT = base + prompt/prefill_rate; TPOT = base × contention factor) so
+    metrics can be verified against hand-computed values.
+  - `VLLMBackend` — OpenAI-compatible streaming over `httpx`, with readiness
+    polling, model validation, usage parsing, and timeout/disconnect handling.
+    **Not yet validated against a live server** (no GPU host); its streaming and
+    error paths are unit-tested against a mock HTTP transport.
+- **Workload generator** — fixed / randomized / mixed shapes, seeded and
+  deterministic, with tokenizer and heuristic token-count modes (the mode used
+  is recorded in metadata).
+- **Metrics engine** — TTFT, TPOT, inter-token latency, E2E, request and token
+  throughput, nearest-rank p50/p90/p95/p99, failure accounting, and
+  offered-vs-completed throughput separation.
+- **Runner** — warm-up/measurement separation, repetitions, closed-loop and
+  rate-limited arrival patterns, and exactly-one-record-per-request accounting.
+- **Storage** — SQLite index plus per-run `raw.jsonl`, `metadata.json`,
+  `metrics.json`, `summary.csv`, `environment.json`.
+- **Reporting** — Markdown reports with a provenance banner, latency/throughput/
+  failure tables, optional charts, and an explicit limitations section.
+- **CLI** — `run` and `report` are functional; `models`/`compare`/`validate`
+  remain Phase 2.
+
+Verification: 152 tests pass on CPU, including metrics validated against
+analytic ground truth (Definition of Done #2) and an auditability test that
+recomputes the summary from raw JSONL alone (DoD #3).
 
 ## Definition of Done — status
 
 | # | Criterion | Status |
 |---|-----------|--------|
-| 1 | End-to-end benchmark through vLLM | ⏳ Pending (Phase 1 adapter; GPU needed to execute) |
-| 2 | Streaming latency metrics validated against controlled tests | ⏳ Phase 1 |
-| 3 | Raw observations + reproducible metadata saved | ⏳ Phase 1 |
-| 4 | Workload configs compared fairly | ⏳ Phase 3 |
-| 5 | Reports communicate throughput/latency/failures/limits | ⏳ Phase 1+ |
-| 6 | Tests pass in CPU-only environment | ⏳ Phase 1 (Phase 0 tests pass CPU-only) |
+| 1 | End-to-end benchmark through vLLM | ⚠️ Pipeline complete and validated on the mock backend; the vLLM adapter is written to the supported API but has **not** been run against a live server (needs GPU) |
+| 2 | Streaming latency metrics validated against controlled tests | ✅ Phase 1 — analytic ground-truth tests |
+| 3 | Raw observations + reproducible metadata saved | ✅ Phase 1 |
+| 4 | Workload configs compared fairly | ⏳ Phase 3 (fairness gating in Phase 2) |
+| 5 | Reports communicate throughput/latency/failures/limits | ✅ Phase 1 |
+| 6 | Tests pass in CPU-only environment | ✅ 152 tests, no GPU |
 | 7 | Real GPU benchmark documented | ❌ **Pending — requires GPU host** |
-| 8 | Setup instructions + limitations documented | ⏳ Phase 7 |
+| 8 | Setup instructions + limitations documented | ⏳ Phase 7 (methodology and limitations partially documented) |
 
 ### Known constraint
 

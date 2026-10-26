@@ -32,6 +32,7 @@ analysis = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "pytest-cov>=5.0",
     "respx>=0.21",
     "ruff>=0.5",
@@ -83,6 +84,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
 markers = [
     "gpu: requires GPU hardware (deselected in CPU-only environments)",
     "slow: long-running tests",

@@ -7,9 +7,11 @@ inference engines. It is a rigorous benchmarking system — reproducible
 workloads, reliable streaming-based latency metrics, automated experiments, and
 evidence-backed analysis — not a dashboard or an API wrapper.
 
-> **Status: Phase 0 complete.** The scaffold, environment doctor, and quality
-> gates are in place. The benchmark engine itself lands in Phase 1. See
-> [`docs/roadmap.md`](docs/roadmap.md).
+> **Status: Phase 1 complete.** The benchmark engine runs end to end on CPU with
+> a deterministic mock backend: workload generation → streaming execution →
+> metrics → storage → Markdown report. The vLLM adapter is written against the
+> supported OpenAI-compatible API but has **not** been validated against a live
+> server (no GPU on the development host). See [`docs/roadmap.md`](docs/roadmap.md).
 
 > **No GPU results are claimed anywhere in this project.** The development host
 > has no discrete GPU, so real vLLM/GPU measurements are explicitly pending. Any
@@ -67,6 +69,40 @@ inferbench doctor --json
 and the versions of tracked packages. On a machine without a GPU it prints the
 reason the accelerator is unavailable instead of failing.
 
+### Run a benchmark
+
+```sh
+# Runs the mock backend end to end, then writes a Markdown report.
+inferbench run --config configs/baseline.yaml
+
+# Report on a stored run.
+inferbench report <run_id> --output-dir runs
+```
+
+The mock backend needs no GPU or model download. Its report is labelled
+**synthetic** throughout — it validates the pipeline, not hardware performance.
+
+To benchmark a real model, point the config at a vLLM server:
+
+```yaml
+backend:
+  kind: vllm
+  base_url: http://localhost:8000
+  model: <served-model-name>
+```
+
+Each run writes to `runs/<run_id>/`:
+
+| Artifact | Contents |
+|----------|----------|
+| `raw.jsonl` | One JSON object per request — the raw evidence |
+| `metadata.json` | Config, environment, versions, provenance |
+| `metrics.json` | Aggregated summary |
+| `summary.csv` | Flat summary for spreadsheets |
+| `environment.json` | Hardware/software fingerprint |
+| `report.md` | Human-readable report |
+| `chart_*.png` | Charts (when matplotlib is installed) |
+
 ## Development
 
 ```sh
@@ -87,13 +123,18 @@ src/inferbench/
   env.py            environment and hardware inspection
   errors.py         typed exception hierarchy
   logging_utils.py  structured (JSON-lines) logging
+  types.py          core data types (requests, records, metadata)
+  version_info.py   version and user-agent helpers
+  backends/         BackendAdapter interface, mock, vLLM
+  workload/         deterministic workload generation
+  metrics/          TTFT / TPOT / throughput computation
+  runner/           experiment orchestration
+  storage/          SQLite index + raw JSONL artifacts
+  analysis/         Markdown reports and optional charts
 configs/            example experiment configurations
 docs/               methodology, roadmap
-tests/              unit tests (CPU-only)
+tests/              unit + integration tests (CPU-only)
 ```
-
-Modules for the engine (`backends/`, `workload/`, `metrics/`, `runner/`,
-`storage/`, `analysis/`) arrive in Phase 1.
 
 ## License
 

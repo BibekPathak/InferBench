@@ -83,6 +83,12 @@ Documented explicitly so results are interpreted correctly:
 
 ## Phase status
 
-This document currently specifies metrics and rules. Concrete measured results
-will be appended once Phase 1 executes against a real or mock backend, and real
-GPU results once a GPU host is available.
+Metrics and rules above are implemented and tested as of Phase 1. Concrete
+measured results will be appended once Phase 1 executes against a real backend:
+the pipeline is validated end to end on the deterministic mock backend, and the
+vLLM adapter is written to the supported API but has not yet been exercised
+against a live server. Real GPU results follow once a GPU host is available.
+
+Charts and reports are generated from stored runs; see any
+`runs/<run_id>/report.md` for a worked example (labelled synthetic when the mock
+backend produced it).

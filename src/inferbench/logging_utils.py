@@ -146,6 +146,11 @@ def log_event(
     passed directly. This helper is the single, typed funnel for structured
     logging; the extra fields are rendered by :class:`_JsonFormatter`.
 
+    Context keys that would collide with reserved ``LogRecord`` attributes
+    (``name``, ``message``, ``levelname``, …) are renamed with a ``ctx_``
+    prefix rather than raising, since a benchmark tool must never die because a
+    caller chose an unlucky field name.
+
     Args:
         logger: Target logger.
         level: A ``logging`` level constant, e.g. ``logging.INFO``.
@@ -153,5 +158,11 @@ def log_event(
         exc_info: Whether to attach the current exception traceback.
         **context: Arbitrary structured fields to attach to the record.
     """
-    if logger.isEnabledFor(level):
-        logger.log(level, message, extra=context, exc_info=exc_info)
+    if not logger.isEnabledFor(level):
+        return
+
+    safe_context = {
+        (f"ctx_{key}" if key in _RESERVED_RECORD_KEYS else key): value
+        for key, value in context.items()
+    }
+    logger.log(level, message, extra=safe_context, exc_info=exc_info)
