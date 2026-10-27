@@ -1,0 +1,58 @@
+# Experiment B3 — Homogeneous vs heterogeneous request lengths.
+#
+# Compares a fixed-length workload against randomized and mixed workloads with
+# the *same mean* length. This isolates the effect of variance rather than the
+# effect of length: a mixed workload has the same average work but a different
+# latency distribution, because short requests finish quickly while long ones
+# hold resources.
+#
+# `varies: workload.kind` means the loader checks that nothing else changes —
+# so the bounds below must be chosen to produce a comparable mean, and the
+# reference lifetime is held fixed.
+
+name: B3
+description: >
+  Homogeneous vs heterogeneous request lengths at comparable mean length.
+  Isolates the effect of length variance on latency distributions.
+varies: workload.kind
+
+base:
+  run_name: expB3
+  experiment: B3
+  notes: Homogeneous vs heterogeneous length distributions.
+  backend:
+    kind: mock
+    model: mock-model
+  workload:
+    kind: fixed
+    num_requests: 48
+    prompt_tokens: 512
+    output_tokens: 64
+    prompt_tokens_min: 128
+    prompt_tokens_max: 1024
+    output_tokens_min: 16
+    output_tokens_max: 128
+    seed: 0
+  load:
+    pattern: closed_loop
+    concurrency: 8
+    warmup_requests: 4
+    repetitions: 3
+
+variants:
+  - name: homogeneous
+    description: Every request identical — the reference distribution.
+    overrides:
+      workload: {kind: fixed}
+  - name: mixed
+    description: >
+      Short/medium/long mix weighted 40/30/30, so most requests are short but a
+      tail of long ones shares the same mean length.
+    overrides:
+      workload:
+        kind: mixed
+        mix_weights: [0.4, 0.3, 0.3]
+  - name: randomized
+    description: Uniform draw from the same bounds — maximum spread.
+    overrides:
+      workload: {kind: randomized}

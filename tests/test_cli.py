@@ -290,3 +290,98 @@ class TestCompareCommand:
         result = runner.invoke(app, ["compare", a, c, "--output-dir", str(out_dir), "--force"])
         assert result.exit_code == 0, _combined(result)
         assert "overridden" in _combined(result).lower()
+
+
+class TestExperimentCommand:
+    def _experiment_file(self, tmp_path: Path, name: str = "exp.yaml") -> Path:
+        path = tmp_path / name
+        path.write_text(
+            "name: A\n"
+            "varies: load.concurrency\n"
+            "base:\n"
+            "  run_name: expA\n"
+            "  backend:\n    kind: mock\n    model: mock-model\n"
+            "  workload:\n    kind: fixed\n    num_requests: 3\n"
+            "    prompt_tokens: 32\n    output_tokens: 3\n    seed: 0\n"
+            "  load:\n    concurrency: 1\n    warmup_requests: 0\n    repetitions: 2\n"
+            "variants:\n"
+            "  - name: c1\n    overrides:\n      load: {concurrency: 1}\n"
+            "  - name: c4\n    overrides:\n      load: {concurrency: 4}\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_sweep_runs_all_variants(self, tmp_path: Path) -> None:
+        out_dir = tmp_path / "runs"
+        result = runner.invoke(
+            app,
+            [
+                "experiment",
+                "--config",
+                str(self._experiment_file(tmp_path)),
+                "--output-dir",
+                str(out_dir),
+                "--no-charts",
+            ],
+        )
+        assert result.exit_code == 0, _combined(result)
+        assert "Experiment complete" in result.stdout
+        assert "2 / 2" in result.stdout
+        assert "synthetic" in result.stdout
+
+        # One directory per variant, plus the study report.
+        run_dirs = [p for p in out_dir.iterdir() if p.is_dir()]
+        assert len(run_dirs) == 2
+        assert (out_dir / "experiment-A.md").is_file()
+        assert (out_dir / "experiment-A.json").is_file()
+
+    def test_json_output(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "experiment",
+                "--config",
+                str(self._experiment_file(tmp_path)),
+                "--output-dir",
+                str(tmp_path / "runs"),
+                "--no-report",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, _combined(result)
+        payload = json.loads(result.stdout)
+        assert payload["experiment"] == "A"
+        assert payload["complete"] is True
+        assert payload["succeeded"] == 2
+
+    def test_report_contains_trend_table(self, tmp_path: Path) -> None:
+        out_dir = tmp_path / "runs"
+        runner.invoke(
+            app,
+            [
+                "experiment",
+                "--config",
+                str(self._experiment_file(tmp_path)),
+                "--output-dir",
+                str(out_dir),
+                "--no-charts",
+            ],
+        )
+        report = (out_dir / "experiment-A.md").read_text()
+        assert "Results by variant" in report
+        assert "load.concurrency" in report
+        assert "SYNTHETIC" in report
+
+    def test_invalid_experiment_errors_cleanly(self, tmp_path: Path) -> None:
+        bad = tmp_path / "bad.yaml"
+        bad.write_text(
+            "name: bad\n"
+            "varies: load.concurrency\n"
+            "variants:\n"
+            "  - name: a\n    overrides:\n      load: {concurrency: 1}\n"
+            "  - name: b\n    overrides:\n      load: {concurrency: 1}\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(app, ["experiment", "--config", str(bad)])
+        # Two identical variants cannot vary anything; the guard refuses it.
+        assert result.exit_code != 0

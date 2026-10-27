@@ -1,0 +1,59 @@
+# Experiment A — Baseline serving performance.
+#
+# Measures how a fixed workload behaves as offered concurrency increases.
+# This is the "where does it start to struggle?" study: throughput should rise
+# with concurrency until some resource saturates, after which tail latency grows
+# while throughput flattens.
+#
+# Runs on the mock backend by default (no GPU). Point `base.backend.kind` at
+# `vllm` and set `base_url`/`model` to measure a real server with the identical
+# workload.
+#
+# The `varies` field declares the single axis under study. The loader verifies
+# that every variant keeps everything else fixed and refuses the experiment if
+# not — so a stray edit cannot silently turn this into a two-variable study.
+
+name: A
+description: >
+  Baseline serving performance across concurrency levels. Identifies the
+  offered load at which throughput stops scaling and tail latency rises.
+varies: load.concurrency
+
+base:
+  run_name: expA
+  experiment: A
+  notes: Baseline concurrency sweep.
+  backend:
+    kind: mock
+    model: mock-model
+    request_timeout_s: 60
+  workload:
+    kind: fixed
+    num_requests: 24
+    prompt_tokens: 256
+    output_tokens: 64
+    seed: 0
+  load:
+    pattern: closed_loop
+    concurrency: 1
+    warmup_requests: 4
+    repetitions: 3
+
+variants:
+  - name: c1
+    description: Fully serial; establishes the single-request baseline.
+    overrides:
+      load: {concurrency: 1}
+  - name: c2
+    overrides:
+      load: {concurrency: 2}
+  - name: c4
+    overrides:
+      load: {concurrency: 4}
+  - name: c8
+    overrides:
+      load: {concurrency: 8}
+  - name: c16
+    description: Likely past saturation on modest hardware.
+    overrides:
+      load: {concurrency: 16}

@@ -1,0 +1,54 @@
+# Experiment B — Workload sensitivity.
+#
+# How workload *composition* changes TTFT, TPOT, and throughput, holding load
+# constant. Three independent sub-studies live in this file's neighbours because
+# each varies exactly one thing:
+#
+#   B1 (this file)         — prompt length: short vs long input
+#   B2_output_length.yaml  — output length: short vs long generation
+#   B3_mixed_lengths.yaml  — homogeneous vs heterogeneous request lengths
+#
+# Varying prompt and output length together would confound the two effects, so
+# they are deliberately separate experiments.
+
+name: B1
+description: >
+  Prompt-length sensitivity: how input length changes TTFT (prefill-dominated)
+  while holding output length and load constant.
+varies: workload.prompt_tokens
+
+base:
+  run_name: expB1
+  experiment: B1
+  notes: Prompt length sweep at fixed output length and concurrency.
+  backend:
+    kind: mock
+    model: mock-model
+  workload:
+    kind: fixed
+    num_requests: 24
+    prompt_tokens: 128
+    output_tokens: 64
+    seed: 0
+  load:
+    pattern: closed_loop
+    concurrency: 4
+    warmup_requests: 4
+    repetitions: 3
+
+variants:
+  - name: p128
+    description: Short context.
+    overrides:
+      workload: {prompt_tokens: 128}
+  - name: p512
+    overrides:
+      workload: {prompt_tokens: 512}
+  - name: p2048
+    description: Long context; expect TTFT to dominate.
+    overrides:
+      workload: {prompt_tokens: 2048}
+  - name: p8192
+    description: Very long context; prefill should clearly dominate.
+    overrides:
+      workload: {prompt_tokens: 8192}

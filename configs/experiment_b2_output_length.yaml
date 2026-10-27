@@ -1,0 +1,43 @@
+# Experiment B2 — Output-length sensitivity.
+#
+# How generation length changes TPOT and end-to-end latency while holding prompt
+# length and load constant. Decode cost scales with tokens generated, so this
+# isolates the decode-dominated regime.
+
+name: B2
+description: >
+  Output-length sensitivity: how generation length changes TPOT and end-to-end
+  latency, holding prompt length and load constant.
+varies: workload.output_tokens
+
+base:
+  run_name: expB2
+  experiment: B2
+  notes: Output length sweep at fixed prompt length and concurrency.
+  backend:
+    kind: mock
+    model: mock-model
+  workload:
+    kind: fixed
+    num_requests: 24
+    prompt_tokens: 256
+    output_tokens: 32
+    seed: 0
+  load:
+    pattern: closed_loop
+    concurrency: 4
+    warmup_requests: 4
+    repetitions: 3
+
+variants:
+  - name: o32
+    description: Short generation.
+    overrides:
+      workload: {output_tokens: 32}
+  - name: o128
+    overrides:
+      workload: {output_tokens: 128}
+  - name: o512
+    description: Long generation; E2E should be decode-dominated.
+    overrides:
+      workload: {output_tokens: 512}

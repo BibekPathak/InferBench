@@ -424,6 +424,91 @@ def report(
 
 
 @app.command()
+def experiment(
+    config: Annotated[str, typer.Option("--config", "-c", help="Path to an experiment file.")],
+    output_dir: Annotated[
+        str | None,
+        typer.Option("--output-dir", "-o", help="Override the output directory."),
+    ] = None,
+    report: Annotated[
+        bool,
+        typer.Option("--report/--no-report", help="Generate a study report after the sweep."),
+    ] = True,
+    charts: Annotated[
+        bool,
+        typer.Option("--charts/--no-charts", help="Render charts (requires matplotlib)."),
+    ] = True,
+    as_json: Annotated[
+        bool,
+        typer.Option("--json", help="Print the study result as JSON."),
+    ] = False,
+) -> None:
+    """Execute a multi-run experiment defined by --config."""
+    from pathlib import Path
+
+    from inferbench.backends import create_backend
+    from inferbench.env import collect_environment
+    from inferbench.experiment import generate_study_report, load_experiment
+    from inferbench.experiment.runner import StudyRunner
+    from inferbench.storage import ExperimentStore
+
+    experiment_config = load_experiment(config)
+    if output_dir:
+        experiment_config.base.output_dir = Path(output_dir)
+
+    store = ExperimentStore(experiment_config.base.output_dir)
+    try:
+        environment = collect_environment(disk_path=experiment_config.base.output_dir).to_dict()
+        # All variants share the base backend; StudyRunner verifies this.
+        backend = create_backend(experiment_config.base.backend)
+        study = asyncio.run(
+            StudyRunner(experiment_config, backend, store, environment=environment).run()
+        )
+    finally:
+        store.close()
+
+    if as_json:
+        typer.echo(json.dumps(study.to_dict(), indent=2, default=str))
+    else:
+        _print_study_summary(study)
+
+    if report:
+        store = ExperimentStore(experiment_config.base.output_dir)
+        try:
+            path = generate_study_report(store, study, make_charts=charts)
+        finally:
+            store.close()
+        typer.echo(f"Study report: {path}")
+
+    # A partial study exits non-zero so scripts notice it.
+    if not study.is_complete:
+        raise typer.Exit(code=1)
+
+
+def _print_study_summary(study: Any) -> None:
+    typer.echo("")
+    typer.echo(f"Experiment complete: {study.experiment}")
+    typer.echo("-" * 60)
+    typer.echo(f"  varies     {study.varies or 'n/a'}")
+    typer.echo(f"  completed  {study.succeeded} / {study.attempted}")
+    for run in study.runs:
+        summary = run.summary
+        throughput = summary.get("throughput", {})
+        latency = summary.get("latency", {})
+        variant = run.metadata.run_name.split("--", 1)[-1]
+        typer.echo(
+            f"    {variant:<16} {throughput.get('requests_per_s')} req/s  "
+            f"TTFT p50={latency.get('ttft', {}).get('p50')}  "
+            f"E2E p95={latency.get('e2e', {}).get('p95')}"
+        )
+    for name, reason in study.failures.items():
+        typer.echo(f"    {name:<16} FAILED: {reason}")
+    if study.runs and study.runs[0].metadata.data_source != "measured":
+        typer.echo("")
+        typer.echo("  NOTE: synthetic (mock) backend — not real GPU/model performance.")
+
+
+@app.command()
 def validate(
     run_id: Annotated[str, typer.Argument(help="Run id to validate.")],
     output_dir: Annotated[
