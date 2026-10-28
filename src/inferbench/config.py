@@ -27,6 +27,7 @@ __all__ = [
     "WorkloadKind",
     "ArrivalPattern",
     "BackendConfig",
+    "SyntheticBackendConfig",
     "WorkloadConfig",
     "LoadConfig",
     "RunConfig",
@@ -59,6 +60,44 @@ class ArrivalPattern(StrEnum):
     constant_rate = "constant_rate"
     #: Requests are released in bursts of ``burst_size`` at a target rate.
     bursty = "bursty"
+
+
+class SyntheticBackendConfig(BaseModel):
+    """Timing parameters for the synthetic (mock) backend's analytic model.
+
+    These exist so a *synthetic* study can demonstrate load-dependent effects —
+    decode contention, prefill cost — end to end. They are **not** real backend
+    settings: the mock never claims to be a serving engine, and any run carrying
+    these parameters is recorded as ``data_source = "synthetic"``.
+
+    The model is deliberately explicit and reproducible:
+
+    - ``ttft = ttft_base_s + prompt_tokens / prefill_tokens_per_s``
+    - ``tpot = tpot_base_s * (1 + decode_contention * (in_flight - 1))``
+
+    so ``decode_contention > 0`` makes inter-token latency rise with concurrent
+    requests, which is the mechanism a saturation sweep is meant to expose.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    ttft_base_s: float = Field(default=0.02, ge=0, description="Fixed prefill latency floor.")
+    tpot_base_s: float = Field(default=0.005, ge=0, description="Per-token decode latency at idle.")
+    prefill_tokens_per_s: float | None = Field(
+        default=20_000.0,
+        gt=0,
+        description="Prompt tokens processed per second; None disables length scaling.",
+    )
+    decode_contention: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "Fractional TPOT growth per additional in-flight request. 0 means "
+            "perfect scaling; > 0 models decode contention under load."
+        ),
+    )
+    jitter: float = Field(default=0.0, ge=0, description="Uniform per-step jitter in seconds.")
+    seed: int = Field(default=0, description="Seed for the mock's jitter RNG.")
 
 
 class BackendConfig(BaseModel):
@@ -99,6 +138,13 @@ class BackendConfig(BaseModel):
         default=2.0,
         gt=0,
         description="Interval between readiness checks.",
+    )
+    #: Timing parameters for the synthetic mock backend. Ignored by real
+    #: backends; present so a CPU-only study can exercise load-dependent
+    #: effects without pretending the numbers are real.
+    synthetic: SyntheticBackendConfig | None = Field(
+        default=None,
+        description="Mock-backend timing model. Only used when kind == 'mock'.",
     )
 
     @field_validator("base_url")

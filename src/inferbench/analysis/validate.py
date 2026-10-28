@@ -358,7 +358,7 @@ def _check_summary_agreement(
 
     # Wall time must be positive and finite for throughput to mean anything.
     wall_time = stored_throughput.get("wall_time_s")
-    if wall_time is None or not isinstance(wall_time, (int, float)) or wall_time <= 0:
+    if wall_time is None or not isinstance(wall_time, int | float) or wall_time <= 0:
         collector.error("bad_wall_time", f"stored wall time is not positive: {wall_time!r}")
 
     # Latency percentiles should be recomputable; a large divergence means the

@@ -64,7 +64,7 @@ def _numeric(value: Any) -> float | None:
     """Coerce a varied value to a number for ordering, if it looks numeric."""
     if isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         return float(value)
     if isinstance(value, str):
         match = re.match(r"^\s*([0-9]*\.?[0-9]+)\s*$", value)

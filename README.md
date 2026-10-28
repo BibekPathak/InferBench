@@ -7,13 +7,16 @@ inference engines. It is a rigorous benchmarking system — reproducible
 workloads, reliable streaming-based latency metrics, automated experiments, and
 evidence-backed analysis — not a dashboard or an API wrapper.
 
-> **Status: Phase 2 complete.** The full benchmark pipeline runs end to end on
+> **Status: Phase 4 complete.** The full benchmark pipeline runs end to end on
 > CPU with a deterministic mock backend, and every CLI command in the
 > specification is implemented: `doctor`, `models`, `run`, `compare`,
-> `report`, `validate`. Comparison is gated on fairness, and validation
-> re-derives metrics from raw evidence. The vLLM adapter is written against the
-> supported OpenAI-compatible API but has **not** been validated against a live
-> server (no GPU on the development host). See [`docs/roadmap.md`](docs/roadmap.md).
+> `report`, `validate`, and `experiment`. Comparison is gated on fairness,
+> validation re-derives metrics from raw evidence, and multi-run studies vary a
+> single declared axis under a controlled-variable guard. Experiments A–C cover
+> baseline concurrency, workload sensitivity, and concurrency/saturation
+> sweeps. The vLLM adapter is written against the supported OpenAI-compatible
+> API but has **not** been validated against a live server (no GPU on the
+> development host). See [`docs/roadmap.md`](docs/roadmap.md).
 
 > **No GPU results are claimed anywhere in this project.** The development host
 > has no discrete GPU, so real vLLM/GPU measurements are explicitly pending. Any
@@ -90,6 +93,9 @@ inferbench compare <run_a> <run_b> --output-dir runs
 
 # Report on a stored run.
 inferbench report <run_id> --output-dir runs
+
+# Run a multi-run study that varies one axis, then write a trend report.
+inferbench experiment --config configs/experiment_c_concurrency_sweep.yaml
 ```
 
 The mock backend needs no GPU or model download. Its report is labelled

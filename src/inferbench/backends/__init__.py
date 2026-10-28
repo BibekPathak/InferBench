@@ -53,6 +53,18 @@ def create_backend(config: BackendConfig, **kwargs: object) -> BackendAdapter:
         from inferbench.backends.mock import MockBackendOptions
 
         options = kwargs.get("options")
+        if options is None and config.synthetic is not None:
+            # A synthetic study may declare its timing model in config; it is
+            # still synthetic, and the adapter records that fact.
+            s = config.synthetic
+            options = MockBackendOptions(
+                ttft_base_s=s.ttft_base_s,
+                tpot_base_s=s.tpot_base_s,
+                prefill_tokens_per_s=s.prefill_tokens_per_s,
+                decode_contention=s.decode_contention,
+                jitter=s.jitter,
+                seed=s.seed,
+            )
         if options is not None and not isinstance(options, MockBackendOptions):
             raise ConfigurationError("mock backend 'options' must be MockBackendOptions")
         return MockBackend(config, options=options)

@@ -79,7 +79,11 @@ def try_make_study_charts(
         rps = [s.requests_per_s for s in ordered]
         if any(value is not None for value in rps):
             fig, ax = plt.subplots(figsize=(7, 4.5))
-            ax.plot(xs, rps, marker="o", color="#3b6ea5", label="completed req/s")
+            # Drop missing points so the line never crosses a gap.
+            pairs = [(x, y) for x, y in zip(xs, rps, strict=False) if y is not None]
+            if pairs:
+                px, py = zip(*pairs, strict=False)
+                ax.plot(px, py, marker="o", color="#3b6ea5", label="completed req/s")
             ax.set_xlabel(axis_label)
             ax.set_ylabel("requests / second")
             ax.set_title(f"Throughput vs {axis_label} — {study.experiment}")
@@ -97,10 +101,14 @@ def try_make_study_charts(
         ttft = [s.ttft_p50 for s in ordered]
         e2e_p95 = [s.e2e_p95 for s in ordered]
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        if any(value is not None for value in ttft):
-            ax.plot(xs, ttft, marker="o", color="#3b6ea5", label="TTFT p50")
-        if any(value is not None for value in e2e_p95):
-            ax.plot(xs, e2e_p95, marker="s", color="#a5573b", label="E2E p95")
+        ttft_pairs = [(x, y) for x, y in zip(xs, ttft, strict=False) if y is not None]
+        if ttft_pairs:
+            tx, ty = zip(*ttft_pairs, strict=False)
+            ax.plot(tx, ty, marker="o", color="#3b6ea5", label="TTFT p50")
+        e2e_pairs = [(x, y) for x, y in zip(xs, e2e_p95, strict=False) if y is not None]
+        if e2e_pairs:
+            ex, ey = zip(*e2e_pairs, strict=False)
+            ax.plot(ex, ey, marker="s", color="#a5573b", label="E2E p95")
         ax.set_xlabel(axis_label)
         ax.set_ylabel("seconds")
         ax.set_title(f"Latency vs {axis_label} — {study.experiment}")

@@ -1,0 +1,79 @@
+# Experiment C — Concurrency & Saturation.
+#
+# Measures how throughput and tail latency change as offered concurrency increases.
+# The sweep starts at 1 and doubles (1, 2, 4, 8, 16, 32) so the saturation knee
+# — the last point where throughput still improves meaningfully — is visible.
+#
+# The `varies` field declares the single axis under study. The loader verifies
+# that every variant keeps everything else fixed and refuses if not — so a stray
+# edit cannot silently turn this into a two-variable study.
+#
+# The mock backend's ``decode_contention`` models inter-request decode
+# contention: ``tpot = tpot_base * (1 + decode_contention * (concurrency - 1))``.
+# It is declared under ``backend.synthetic`` below (mock-only, clearly not a real
+# backend setting) so this CPU-only study shows the full saturation signature:
+# throughput flattens *and* the tail rises. Set it to 0 for ideal scaling.
+#
+# Point `backend.kind` at `vllm` and set `base_url`/`model` to measure a real
+# server with the identical workload.
+
+name: C
+description: >
+  Concurrency sweep identifying the saturation knee where throughput stops
+  scaling and tail latency rises sharply.
+varies: load.concurrency
+
+base:
+  run_name: expC
+  experiment: C
+  notes: Concurrency sweep at fixed workload; identifies saturation knee.
+  backend:
+    kind: mock
+    model: mock-model
+    request_timeout_s: 120
+    # Synthetic timing model (mock backend only). decode_contention > 0 makes
+    # TPOT grow with in-flight requests, which is the mechanism a saturation
+    # sweep exists to expose: throughput flattens while the tail rises.
+    synthetic:
+      ttft_base_s: 0.02
+      tpot_base_s: 0.004
+      prefill_tokens_per_s: 20000.0
+      decode_contention: 0.35
+      seed: 0
+  workload:
+    kind: fixed
+    num_requests: 12
+    prompt_tokens: 256
+    output_tokens: 32
+    seed: 0
+  load:
+    pattern: closed_loop
+    concurrency: 1
+    warmup_requests: 2
+    repetitions: 3
+
+variants:
+  - name: c1
+    description: Minimal concurrency; single-request baseline.
+    overrides:
+      load: {concurrency: 1}
+  - name: c2
+    description: Double the in-flight requests.
+    overrides:
+      load: {concurrency: 2}
+  - name: c4
+    description: Typical multi-user load.
+    overrides:
+      load: {concurrency: 4}
+  - name: c8
+    description: Heavy multi-user load.
+    overrides:
+      load: {concurrency: 8}
+  - name: c16
+    description: Near saturation on modest hardware.
+    overrides:
+      load: {concurrency: 16}
+  - name: c32
+    description: Well past saturation; throughput should stall, tail latency rises.
+    overrides:
+      load: {concurrency: 32}

@@ -89,7 +89,7 @@ class TestMockBackendStreaming:
         backend = MockBackend(options=MockBackendOptions(real_time=False))
         await backend.setup()
         events = await collect(backend, spec(5))
-        terminals = [e for e in events if isinstance(e, (CompletionSignal, FailureSignal))]
+        terminals = [e for e in events if isinstance(e, CompletionSignal | FailureSignal)]
         assert len(terminals) == 1
         assert events[-1] is terminals[0]
 
@@ -185,6 +185,43 @@ class TestCreateBackend:
     def test_rejects_bad_mock_options(self) -> None:
         with pytest.raises(ConfigurationError, match="MockBackendOptions"):
             create_backend(BackendConfig(kind=BackendKind.mock), options="nope")
+
+    def test_synthetic_config_builds_mock_options(self) -> None:
+        """A synthetic study may declare its timing model in config."""
+        from inferbench.config import SyntheticBackendConfig
+
+        config = BackendConfig(
+            kind=BackendKind.mock,
+            synthetic=SyntheticBackendConfig(decode_contention=0.5, tpot_base_s=0.01),
+        )
+        backend = create_backend(config)
+        assert isinstance(backend, MockBackend)
+        assert backend.options.decode_contention == pytest.approx(0.5)
+        assert backend.options.tpot_base_s == pytest.approx(0.01)
+
+    def test_explicit_options_win_over_synthetic_config(self) -> None:
+        """The kwargs hook (used by tests) still overrides config."""
+        from inferbench.config import SyntheticBackendConfig
+
+        config = BackendConfig(
+            kind=BackendKind.mock,
+            synthetic=SyntheticBackendConfig(decode_contention=0.5),
+        )
+        override = MockBackendOptions(decode_contention=0.0)
+        backend = create_backend(config, options=override)
+        assert isinstance(backend, MockBackend)
+        assert backend.options is override
+
+    def test_synthetic_only_applies_to_mock(self) -> None:
+        """A real backend ignores the synthetic section rather than misusing it."""
+        from inferbench.config import SyntheticBackendConfig
+
+        config = BackendConfig(
+            kind=BackendKind.vllm,
+            synthetic=SyntheticBackendConfig(decode_contention=0.5),
+        )
+        backend = create_backend(config)
+        assert backend.name == "vllm"
 
 
 # ---------------------------------------------------------------------------
